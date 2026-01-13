@@ -5,7 +5,7 @@ import io
 import os
 
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB limit
+app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB
 
 
 HOME_HTML = """
@@ -193,6 +193,7 @@ def remove_bg():
     return send_file(buf, mimetype="image/png")
 
 
+# 🔥 CRITICAL FOR RENDER 🔥
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port, debug=False)
