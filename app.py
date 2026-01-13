@@ -1,5 +1,4 @@
 from flask import Flask, request, send_file, jsonify, render_template_string
-from rembg import remove
 from PIL import Image
 import io
 import os
@@ -118,7 +117,10 @@ btn.addEventListener("click", async () => {
 
   try {
     const response = await fetch("/remove-bg", { method: "POST", body: formData });
-    if (!response.ok) throw new Error("Server error");
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text || "Server error");
+    }
 
     const blob = await response.blob();
     if (latestBlobUrl) URL.revokeObjectURL(latestBlobUrl);
@@ -159,13 +161,22 @@ def health():
     return jsonify({"status": "ok"})
 
 
-def hex_to_rgb(hex_color):
-    hex_color = hex_color.lstrip("#")
-    return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+def hex_to_rgb(hex_color: str):
+    hex_color = hex_color.strip().lstrip("#")
+    if len(hex_color) != 6:
+        return (255, 255, 255)
+    r = int(hex_color[0:2], 16)
+    g = int(hex_color[2:4], 16)
+    b = int(hex_color[4:6], 16)
+    return (r, g, b)
 
 
 @app.route("/remove-bg", methods=["POST"])
 def remove_bg():
+    # ✅ CRITICAL FIX FOR RENDER:
+    # Load rembg only when a request comes in (avoids blocking startup)
+    from rembg import remove
+
     if "image" not in request.files:
         return jsonify({"error": "No image uploaded"}), 400
 
@@ -173,27 +184,37 @@ def remove_bg():
     if file.filename == "":
         return jsonify({"error": "Empty filename"}), 400
 
-    bg_mode = request.form.get("bg_mode", "transparent")
+    bg_mode = request.form.get("bg_mode", "transparent")  # transparent | white | color
     bg_color = request.form.get("bg_color", "#ffffff")
 
-    input_image = Image.open(file).convert("RGBA")
-    cutout = remove(input_image)
+    try:
+        input_image = Image.open(file).convert("RGBA")
 
-    if bg_mode in ("white", "color"):
-        rgb = (255, 255, 255) if bg_mode == "white" else hex_to_rgb(bg_color)
-        background = Image.new("RGBA", cutout.size, rgb + (255,))
-        output = Image.alpha_composite(background, cutout)
-    else:
-        output = cutout
+        # Remove background -> RGBA with alpha
+        cutout = remove(input_image)
 
-    buf = io.BytesIO()
-    output.save(buf, format="PNG")
-    buf.seek(0)
+        # Add background color if chosen
+        if bg_mode in ("white", "color"):
+            if bg_mode == "white":
+                rgb = (255, 255, 255)
+            else:
+                rgb = hex_to_rgb(bg_color)
 
-    return send_file(buf, mimetype="image/png")
+            background = Image.new("RGBA", cutout.size, rgb + (255,))
+            output_image = Image.alpha_composite(background, cutout)
+        else:
+            output_image = cutout
+
+        buf = io.BytesIO()
+        output_image.save(buf, format="PNG")
+        buf.seek(0)
+        return send_file(buf, mimetype="image/png")
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
-# 🔥 CRITICAL FOR RENDER 🔥
+# ✅ DEPLOY SAFE: bind to Render's PORT and listen on 0.0.0.0
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=False)
